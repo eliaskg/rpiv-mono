@@ -11,6 +11,14 @@ interface TodoConfig {
 	 * entirely. Validation happens in `resolveCollapseKey`, not at load.
 	 */
 	collapseKey?: string;
+	/**
+	 * Clear the list automatically when every visible task is `completed`. The
+	 * auto path keeps the id counter, so ids continue where they stopped — unlike
+	 * `/todos clear`, which restarts them at 1. Defaults to `true`; any
+	 * non-boolean falls back to the default. Read fresh on every tool call, so a
+	 * change needs no `/reload`.
+	 */
+	autoClear?: boolean;
 }
 
 /** Default content-row budget when the config is missing/invalid — the prior
@@ -25,6 +33,9 @@ export const DEFAULT_COLLAPSE_KEY: CollapseKeySpec = "ctrl+shift+t";
 
 /** Sentinel value for `collapseKey` that disables the collapse shortcut entirely. */
 export const COLLAPSE_KEY_OFF: CollapseKeySpec = "off";
+
+/** Default for `autoClear` when the field is missing or not a boolean. */
+export const DEFAULT_AUTO_CLEAR = true;
 
 export function loadConfig(): TodoConfig {
 	return loadJsonConfigWithLegacyFallback<TodoConfig>("rpiv-todo");
@@ -96,6 +107,14 @@ export function resolveCollapseKey(): CollapseKeySpec {
 	if (raw === undefined || raw === "") return DEFAULT_COLLAPSE_KEY;
 	if (raw === COLLAPSE_KEY_OFF) return COLLAPSE_KEY_OFF;
 	return isValidCollapseKeySpec(raw) ? raw : DEFAULT_COLLAPSE_KEY;
+}
+
+/** Whether a fully completed list clears itself, read fresh on every `todo` tool
+ *  call (per-call, like `getMaxWidgetLines()`). A non-boolean falls back to
+ *  `DEFAULT_AUTO_CLEAR`; there is no sentinel — `false` is the off switch. */
+export function getAutoClear(): boolean {
+	const config = loadConfig();
+	return typeof config.autoClear === "boolean" ? config.autoClear : DEFAULT_AUTO_CLEAR;
 }
 
 export { validateGuidanceFields };

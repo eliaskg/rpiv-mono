@@ -74,6 +74,30 @@ export function formatContent(op: Op, state: TaskState): string {
 }
 
 /**
+ * Fold an auto-clear into an already-built envelope. `formatContent` ran against
+ * the pre-clear snapshot, so the base line stays accurate (a `create` line still
+ * names its subject). This appends the model-facing note and re-points `details`
+ * at the cleared snapshot.
+ *
+ * `details` is the replay source, so the re-point is what makes the auto-clear
+ * durable: `state/replay.ts` takes the LAST `todo` tool result, and that snapshot
+ * is now empty. No `rpiv-todo-clear` entry is needed on this path.
+ */
+export function applyAutoClear(
+	result: { content: Array<{ type: "text"; text: string }>; details: TaskDetails },
+	cleared: TaskState,
+	count: number,
+): { content: Array<{ type: "text"; text: string }>; details: TaskDetails } {
+	const noun = count === 1 ? "task" : "tasks";
+	const note = `Auto-cleared ${count} ${noun}. Task ids continue at ${cleared.nextId}.`;
+	const [first] = result.content;
+	return {
+		content: [{ type: "text", text: first ? `${first.text}\n${note}` : note }],
+		details: { ...result.details, tasks: [...cleared.tasks], nextId: cleared.nextId },
+	};
+}
+
+/**
  * Build the LLM-facing tool envelope after the store has committed the
  * reducer's new state. `details` is the persistence + replay snapshot —
  * `state/replay.ts` consumes this exact shape on session lifecycle events.

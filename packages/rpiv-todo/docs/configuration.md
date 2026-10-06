@@ -33,6 +33,7 @@ extension only reads it.
 {
   "maxWidgetLines": 8,
   "collapseKey": "alt+t",
+  "autoClear": true,
   "guidance": {
     "promptSnippet": "Use the `todo` tool to track multi-step work before starting it.",
     "promptGuidelines": [
@@ -82,6 +83,24 @@ Examples: `alt+o`, `ctrl+shift+t`, `super+alt+f5`.
   run `/reload` to rebind; until you do, the old key stays active even though the
   collapsed panel's hint text (which is resolved per render) already shows the
   new one.
+
+## `autoClear`
+
+**Default `true`.** Whether the `todo` tool empties the list when a mutating
+action leaves every visible task `completed`.
+
+- `false` keeps a fully completed list until you run `/todos clear`.
+- A non-boolean falls back to the default.
+- Read fresh on every tool call, so a change takes effect on the next call — no
+  `/reload`.
+- The automatic clear keeps the id counter, so new tasks continue where the ids
+  stopped. `/todos clear` restarts them at `1`.
+- The guideline bullet that tells the model about the auto-clear is read at
+  extension load. After you flip this value, run `/reload` to add or remove that
+  bullet.
+
+Full behavior, including what the model is told: [Overlay and
+`/todos`](./overlay.md#auto-clear).
 
 ## Guidance
 

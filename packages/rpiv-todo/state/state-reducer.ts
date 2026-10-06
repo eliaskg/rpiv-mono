@@ -65,6 +65,22 @@ function taskChanged(before: Task, after: Task): boolean {
 }
 
 /**
+ * Auto-clear variant of the `clear` action: empties `tasks` but keeps `nextId`.
+ * The `clear` action restarts ids at 1, which is right for a human who typed
+ * `/todos clear`. The automatic path must not: the model issues several `todo`
+ * calls per message, so a stale `update #3` can arrive right after the clear and
+ * silently hit a brand new task when ids restart. Keeping the counter makes that
+ * call return `#3 not found` instead.
+ *
+ * Pure, and deliberately not an `Op` variant — the auto-clear reports itself in
+ * the completing call's own tool result, so it needs no reducer branch and no
+ * model-callable action.
+ */
+export function clearTasksPreservingIds(state: TaskState): TaskState {
+	return { tasks: [], nextId: state.nextId };
+}
+
+/**
  * Pure reducer: (state, action, params) → (state, op). The response envelope (`tool/response-envelope.ts`) owns
  * formatting, the store (`state/store.ts`) owns commit.
  *

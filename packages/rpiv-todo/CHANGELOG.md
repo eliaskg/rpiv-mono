@@ -7,6 +7,12 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`/todos clear` empties the list and keeps it empty across `/reload`, `/compact`, and `/tree`.** The command runs the existing `clear` reducer action, appends a `rpiv-todo-clear` session entry that `state/replay.ts` reads as a reset, and writes a `rpiv-todo-cleared` message with `triggerTurn: false`, so the model learns the list is empty without costing a model turn. `/todos ` autocompletes `clear`. An unknown argument reports `Usage: /todos [clear]` and changes nothing; an already empty list reports `No todos to clear.` and writes nothing. Custom entries carry no model context, which is why the notice accompanies the entry.
+
+- **A fully completed list clears itself.** After any `create`, `update`, or `delete` that leaves every visible task `completed`, the `todo` tool commits an empty list, appends `Auto-cleared N tasks. Task ids continue at M.` to the completing call's own tool result, and reports one `Auto-cleared N todos.` toast. The automatic clear keeps the id counter, so a stale `update #3` returns `#3 not found` instead of mutating a new task; `/todos clear` still restarts ids at `1`. It writes no session entry, because the completing call's `details` snapshot already holds the empty list and that snapshot is what `state/replay.ts` reads back. `list` and `get` never clear, and a tombstone-only list never clears. A `delete` result echo now falls back to `deleted` when that clear removed the tombstone it points at. Set `"autoClear": false` to keep completed lists on screen; the guidance bullet that tells the model about the auto-clear then disappears as well, after `/reload`.
+
 ## [2.12.0] - 2026-09-30
 
 ### Fixed

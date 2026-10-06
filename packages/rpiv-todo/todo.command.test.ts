@@ -1,18 +1,38 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createMockCtx, createMockPi } from "@juicesharp/rpiv-test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetState, registerTodosCommand, registerTodoTool, TOOL_NAME } from "./todo.js";
+import { __resetState, getTodos, registerTodosCommand, registerTodoTool, TOOL_NAME } from "./todo.js";
+
+/** Default session id `createMockCtx` mints — the task-state slot key. */
+const SESSION_ID = "test-session";
+const CONFIG_PATH = join(process.env.HOME!, ".config", "rpiv-todo", "config.json");
+
+/**
+ * `autoClear` is on by default, so a fully completed list empties itself before
+ * `/todos` can print it. Grouped-output tests that need completed rows to
+ * survive write `{ autoClear: false }` first.
+ */
+function writeConfigFile(contents: string): void {
+	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+	writeFileSync(CONFIG_PATH, contents, "utf-8");
+}
+function removeConfigFile(): void {
+	rmSync(CONFIG_PATH, { force: true });
+}
 
 function setup() {
 	__resetState();
 	const { pi, captured } = createMockPi();
+	const refreshOverlay = vi.fn(async () => {});
 	registerTodoTool(pi);
-	registerTodosCommand(pi);
+	registerTodosCommand(pi, refreshOverlay);
 	const tool = captured.tools.get(TOOL_NAME);
 	if (!tool) throw new Error("tool not registered");
 	const cmd = captured.commands.get("todos");
 	if (!cmd) throw new Error("command not registered");
-	return { tool, cmd };
+	return { pi, captured, tool, cmd, refreshOverlay };
 }
 
 async function seed(tool: ReturnType<typeof setup>["tool"], actions: Array<Record<string, unknown>>) {
@@ -24,9 +44,11 @@ async function seed(tool: ReturnType<typeof setup>["tool"], actions: Array<Recor
 
 beforeEach(() => {
 	__resetState();
+	removeConfigFile();
 });
 afterEach(() => {
 	__resetState();
+	removeConfigFile();
 	vi.restoreAllMocks();
 });
 
@@ -103,6 +125,7 @@ describe("/todos command — grouped output", () => {
 	});
 
 	it("renders 'Completed' group with ✓ glyph and 'N/M completed' header", async () => {
+		writeConfigFile(JSON.stringify({ autoClear: false }));
 		const { tool, cmd } = setup();
 		await seed(tool, [
 			{ action: "create", subject: "ship" },
@@ -161,5 +184,123 @@ describe("/todos command — grouped output", () => {
 		const out = grabOutput(ctx);
 		expect(out).toContain("keep");
 		expect(out).not.toContain("drop");
+	});
+});
+
+describe("/todos command — clear", () => {
+	it("empties the list, appends the durable reset entry, and repaints", async () => {
+		const { captured, tool, cmd, refreshOverlay } = setup();
+		await seed(tool, [
+			{ action: "create", subject: "a" },
+			{ action: "create", subject: "b" },
+		]);
+		expect(getTodos(SESSION_ID)).toHaveLength(2);
+
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("clear", ctx as never);
+
+		expect(getTodos(SESSION_ID)).toEqual([]);
+		expect(captured.entries).toEqual([{ customType: "rpiv-todo-clear", data: { count: 2 } }]);
+		expect(refreshOverlay).toHaveBeenCalledTimes(1);
+		const notify = ctx.ui.notify as ReturnType<typeof vi.fn>;
+		expect(notify).toHaveBeenCalledWith("2 cleared.", "info");
+	});
+
+	it("tells the model about the clear without triggering a turn", async () => {
+		const { pi, tool, cmd } = setup();
+		await seed(tool, [{ action: "create", subject: "a" }]);
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("clear", ctx as never);
+		const sendMessage = pi.sendMessage as unknown as ReturnType<typeof vi.fn>;
+		expect(sendMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				customType: "rpiv-todo-cleared",
+				display: true,
+				content: "Todo list cleared by the user. 1 task removed. Task ids restart at 1.",
+				details: { count: 1 },
+			}),
+			{ triggerTurn: false },
+		);
+	});
+
+	it("notifies and writes nothing when the list is already empty", async () => {
+		const { captured, pi, cmd, refreshOverlay } = setup();
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("clear", ctx as never);
+		const notify = ctx.ui.notify as ReturnType<typeof vi.fn>;
+		expect(notify).toHaveBeenCalledWith("No todos to clear.", "info");
+		expect(captured.entries).toEqual([]);
+		expect(pi.sendMessage).not.toHaveBeenCalled();
+		expect(refreshOverlay).not.toHaveBeenCalled();
+	});
+
+	it("clears tombstones and counts them", async () => {
+		const { captured, tool, cmd } = setup();
+		await seed(tool, [
+			{ action: "create", subject: "a" },
+			{ action: "update", id: 1, status: "deleted" },
+		]);
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("clear", ctx as never);
+		expect(getTodos(SESSION_ID)).toEqual([]);
+		expect(captured.entries).toEqual([{ customType: "rpiv-todo-clear", data: { count: 1 } }]);
+	});
+
+	it("accepts the argument with mixed case and surrounding space", async () => {
+		const { captured, tool, cmd } = setup();
+		await seed(tool, [{ action: "create", subject: "a" }]);
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("  CLEAR ", ctx as never);
+		expect(captured.entries).toHaveLength(1);
+		expect(getTodos(SESSION_ID)).toEqual([]);
+	});
+
+	it("rejects an unknown argument and leaves the list untouched", async () => {
+		const { captured, tool, cmd, refreshOverlay } = setup();
+		await seed(tool, [{ action: "create", subject: "keep" }]);
+		const ctx = createMockCtx({ hasUI: true });
+		await cmd.handler("clear now", ctx as never);
+		const notify = ctx.ui.notify as ReturnType<typeof vi.fn>;
+		expect(notify).toHaveBeenCalledWith("Usage: /todos [clear]", "error");
+		expect(getTodos(SESSION_ID)).toHaveLength(1);
+		expect(captured.entries).toEqual([]);
+		expect(refreshOverlay).not.toHaveBeenCalled();
+	});
+
+	it("keeps the interactive guard ahead of the clear path", async () => {
+		const { captured, tool, cmd } = setup();
+		await seed(tool, [{ action: "create", subject: "a" }]);
+		const ctx = createMockCtx({ hasUI: false });
+		await cmd.handler("clear", ctx as never);
+		const notify = ctx.ui.notify as ReturnType<typeof vi.fn>;
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("interactive"), "error");
+		expect(captured.entries).toEqual([]);
+		expect(getTodos(SESSION_ID)).toHaveLength(1);
+	});
+
+	it("restarts ids at 1 for tasks created after the clear", async () => {
+		const { tool, cmd } = setup();
+		await seed(tool, [{ action: "create", subject: "old" }]);
+		await cmd.handler("clear", createMockCtx({ hasUI: true }) as never);
+		await seed(tool, [{ action: "create", subject: "new" }]);
+		expect(getTodos(SESSION_ID).map((task) => task.id)).toEqual([1]);
+		expect(getTodos(SESSION_ID).map((task) => task.subject)).toEqual(["new"]);
+	});
+});
+
+describe("/todos command — argument completion", () => {
+	it("offers `clear` for an empty and a partial prefix", async () => {
+		const { cmd } = setup();
+		const complete = cmd.getArgumentCompletions;
+		expect(await complete?.("")).toEqual([
+			{ value: "clear", label: "clear", description: "Remove every todo on this branch" },
+		]);
+		const partial = await complete?.("cle");
+		expect(partial?.[0]?.value).toBe("clear");
+	});
+
+	it("offers nothing once the prefix cannot become `clear`", () => {
+		const { cmd } = setup();
+		expect(cmd.getArgumentCompletions?.("x")).toBeNull();
 	});
 });

@@ -26,8 +26,13 @@ const identityTheme = {
 async function setup(
 	actions: Array<{ action: TaskAction; [k: string]: unknown }>,
 	uiOverrides: Partial<Omit<ExtensionUIContext, "theme">> = {},
+	// `autoClear` is on by default, so a list that ends fully completed empties
+	// itself before the overlay can draw it. Overlay tests that need completed rows
+	// to survive pass `{ autoClear: false }` — written before the tool runs.
+	config?: Record<string, unknown>,
 ) {
 	__resetState();
+	if (config) writeConfigFile(JSON.stringify(config));
 	setActiveRenderSession("test-session");
 	const { pi, captured } = createMockPi();
 	registerTodoTool(pi);
@@ -76,10 +81,14 @@ describe("TodoOverlay — heading", () => {
 	});
 
 	it("uses hollow icon '○' when all tasks are completed", async () => {
-		const { widget } = await setup([
-			{ action: "create", subject: "a" },
-			{ action: "update", id: 1, status: "completed" },
-		]);
+		const { widget } = await setup(
+			[
+				{ action: "create", subject: "a" },
+				{ action: "update", id: 1, status: "completed" },
+			],
+			{},
+			{ autoClear: false },
+		);
 		expect(widget.render(200)[0]).toContain("○");
 	});
 });
@@ -130,10 +139,14 @@ describe("TodoOverlay — per-task formatting", () => {
 	});
 
 	it("completed task stays visible until the next agent turn starts", async () => {
-		const { widget, overlay } = await setup([
-			{ action: "create", subject: "done" },
-			{ action: "update", id: 1, status: "completed" },
-		]);
+		const { widget, overlay } = await setup(
+			[
+				{ action: "create", subject: "done" },
+				{ action: "update", id: 1, status: "completed" },
+			],
+			{},
+			{ autoClear: false },
+		);
 		const firstRender = widget.render(200);
 		expect(firstRender[1]).toContain("✓");
 		expect(firstRender[1]).toContain("done");
@@ -310,10 +323,14 @@ describe("TodoOverlay — collapse/expand render", () => {
 	});
 
 	it("collapsed render short-circuits before completed-display tracking (no task queued for hide while collapsed)", async () => {
-		const { widget, overlay } = await setup([
-			{ action: "create", subject: "done" },
-			{ action: "update", id: 1, status: "completed" },
-		]);
+		const { widget, overlay } = await setup(
+			[
+				{ action: "create", subject: "done" },
+				{ action: "update", id: 1, status: "completed" },
+			],
+			{},
+			{ autoClear: false },
+		);
 		overlay.toggleCollapse(); // collapse
 		widget.render(200); // collapsed render — must NOT queue the completed task
 		// Draining the pending-hide set is a no-op because nothing was queued.
@@ -382,11 +399,15 @@ describe("TodoOverlay — width truncation", () => {
 	});
 
 	it("drops completed tasks from counts after the next agent turn starts", async () => {
-		const { widget, overlay } = await setup([
-			{ action: "create", subject: "done" },
-			{ action: "update", id: 1, status: "completed" },
-			{ action: "create", subject: "next" },
-		]);
+		const { widget, overlay } = await setup(
+			[
+				{ action: "create", subject: "done" },
+				{ action: "update", id: 1, status: "completed" },
+				{ action: "create", subject: "next" },
+			],
+			{},
+			{ autoClear: false },
+		);
 		expect(widget.render(200).join("\n")).toContain("Todos (1/2)");
 		const secondRender = widget.render(200).join("\n");
 		expect(secondRender).toContain("Todos (1/2)");

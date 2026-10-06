@@ -11,6 +11,11 @@
 
   "command.no_todos": "No todos yet. Ask the agent to add some!",
   "command.requires_interactive": "/todos requires interactive mode",
+  "command.usage": "Usage: /todos [clear]",
+  "command.nothing_to_clear": "No todos to clear.",
+  "command.cleared": "{count} cleared.",
+  "command.auto_cleared": "Auto-cleared {count} todos.",
+  "command.argument.clear": "Remove every todo on this branch",
   "command.section.pending": "── Pending ──",
   "command.section.in_progress": "── In Progress ──",
   "command.section.completed": "── Completed ──"

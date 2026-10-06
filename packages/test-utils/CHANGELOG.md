@@ -4,6 +4,10 @@ All notable changes to this package will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`createMockPi()` now stubs `appendEntry` and `registerMessageRenderer`.** `captured.entries` records every `pi.appendEntry(customType, data)` call in order, so tests can assert on durable, non-context session writes. `registerMessageRenderer` is a bare spy. Before this, an extension that appended an entry threw `pi.appendEntry is not a function` under the mock.
+
 ## [2.12.0] - 2026-09-30
 
 ## [2.11.0] - 2026-09-21

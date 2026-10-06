@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskState } from "../state/state.js";
 import type { Op } from "../state/state-reducer.js";
-import { buildToolResult, formatContent } from "./response-envelope.js";
+import { applyAutoClear, buildToolResult, formatContent } from "./response-envelope.js";
 import type { Task } from "./types.js";
 
 const stateWith = (...tasks: Task[]): TaskState => ({
@@ -140,6 +140,58 @@ describe("buildToolResult", () => {
 		});
 		expect(env.details.error).toBe("subject required for create");
 		expect(env.content[0].text).toBe("Error: subject required for create");
+	});
+});
+
+describe("applyAutoClear", () => {
+	it("appends the note below the base line and re-points details", () => {
+		const preClear = stateWith(t({ id: 1, subject: "alpha", status: "completed" }));
+		const env = buildToolResult("update", { id: 1, status: "completed" }, preClear, {
+			kind: "update",
+			id: 1,
+			fromStatus: "in_progress",
+			toStatus: "completed",
+			changed: true,
+		});
+		const folded = applyAutoClear(env, { tasks: [], nextId: 2 }, 1);
+		expect(folded.content[0].text).toBe(
+			"Updated #1 (in_progress → completed)\nAuto-cleared 1 task. Task ids continue at 2.",
+		);
+		expect(folded.details.tasks).toEqual([]);
+		expect(folded.details.nextId).toBe(2);
+		expect(folded.details.action).toBe("update");
+	});
+
+	it("uses the plural noun above one and reports the surviving counter", () => {
+		const env = buildToolResult("update", { id: 3 }, stateWith(), {
+			kind: "update",
+			id: 3,
+			fromStatus: "in_progress",
+			toStatus: "completed",
+			changed: true,
+		});
+		const folded = applyAutoClear(env, { tasks: [], nextId: 7 }, 6);
+		expect(folded.content[0].text).toBe(
+			"Updated #3 (in_progress → completed)\nAuto-cleared 6 tasks. Task ids continue at 7.",
+		);
+	});
+
+	it("leaves the pre-clear envelope untouched", () => {
+		const env = buildToolResult("delete", { id: 1 }, stateWith(t({ id: 1, subject: "x", status: "deleted" })), {
+			kind: "delete",
+			id: 1,
+			subject: "x",
+		});
+		const folded = applyAutoClear(env, { tasks: [], nextId: 2 }, 1);
+		expect(env.details.nextId).toBe(2);
+		expect(env.details.tasks).toHaveLength(1);
+		expect(folded).not.toBe(env);
+	});
+
+	it("emits the note alone when the base envelope carries no text", () => {
+		const details = { action: "update" as const, params: {}, tasks: [], nextId: 2 };
+		const folded = applyAutoClear({ content: [], details }, { tasks: [], nextId: 2 }, 3);
+		expect(folded.content[0].text).toBe("Auto-cleared 3 tasks. Task ids continue at 2.");
 	});
 });
 

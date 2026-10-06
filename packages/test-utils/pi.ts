@@ -49,6 +49,12 @@ export interface CapturedPi {
 	eventsEmitted: Map<string, unknown[]>;
 	activeTools: string[];
 	allTools: ToolInfo[];
+	/**
+	 * Custom entries appended through `pi.appendEntry(customType, data)`, in call
+	 * order. Lets tests assert on durable, non-context session writes (the
+	 * `/todos clear` reset entry, for example).
+	 */
+	entries: Array<{ customType: string; data: unknown }>;
 }
 
 export interface MockPi {
@@ -82,6 +88,7 @@ export function createMockPi(options: CreateMockPiOptions = {}): MockPi {
 		eventsEmitted: new Map(),
 		activeTools: [],
 		allTools: [],
+		entries: [],
 	};
 
 	const { skills, ...overrides } = options;
@@ -119,6 +126,10 @@ export function createMockPi(options: CreateMockPiOptions = {}): MockPi {
 			// Sync fire-and-forget in production; mock captures nothing extra.
 			// Tests assert on sentMessages via the chain or directly on this spy.
 		}),
+		appendEntry: vi.fn((customType: string, data?: unknown) => {
+			captured.entries.push({ customType, data });
+		}),
+		registerMessageRenderer: vi.fn(),
 		exec: vi.fn(async () => ({ stdout: "", stderr: "", code: 0, killed: false })),
 		getActiveTools: vi.fn(() => [...captured.activeTools]),
 		setActiveTools: vi.fn((names: string[]) => {

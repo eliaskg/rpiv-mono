@@ -110,6 +110,62 @@ tasks. Tombstoned tasks are never listed.
 - With no tasks: `No todos yet. Ask the agent to add some!`
 - In a non-interactive session: `/todos requires interactive mode`
 
+### `/todos clear`
+
+`/todos clear` removes every task on the current branch, tombstones included.
+It asks for no confirmation. The argument is matched after trim and lowercase,
+so `/todos Clear` works. Two words do not: `/todos clear now` reports
+`Usage: /todos [clear]` and changes nothing.
+
+The command runs the same `clear` reducer action the `todo` tool uses, in this
+order:
+
+1. Commit the empty list, so the panel and `/todos` see it at once.
+2. Append a `rpiv-todo-clear` session entry. Replay reads it as a reset, so the
+   clear survives `/reload`, `/compact`, and `/tree`. The entry carries the
+   removed count only.
+3. Write a `rpiv-todo-cleared` message with `triggerTurn: false`. The model
+   reads it on its next turn, so the clear costs no round trip.
+4. Repaint the panel and report `N cleared.`
+
+Custom entries never enter model context. Step 3 is therefore what tells the
+model the list is empty. Without it the model still sees the old `todo` tool
+results and may call `update` on a removed id. That call returns
+`#3 not found`.
+
+State stays branch-relative. `/tree` navigation to a point before the clear
+entry restores the tasks that were visible there.
+
+- With no tasks: `No todos to clear.` Nothing is written.
+- In a non-interactive session: `/todos requires interactive mode`
+
+### Auto-clear
+
+While `autoClear` is `true` (the default), the `todo` tool empties the list as
+soon as a mutating action leaves every visible task `completed`. The check runs
+after `create`, `update`, and `delete`. Reads never clear: `list` and `get` leave
+the list alone. A list of only tombstones is already empty, so it does not
+trigger a clear of its own.
+
+The automatic clear differs from `/todos clear` in two ways:
+
+1. It keeps the id counter. Tasks created afterwards continue at the next id, so
+   a stale `update #3` returns `#3 not found` instead of hitting a new task.
+   `/todos clear` restarts ids at `1`.
+2. It writes no session entry and no message. The completing call's own tool
+   result carries the empty snapshot, and replay reads that snapshot. The result
+   text gains one line:
+
+   ```text
+   Updated #2 (in_progress → completed)
+   Auto-cleared 2 tasks. Task ids continue at 3.
+   ```
+
+The panel disappears with the list, and you get one `Auto-cleared N todos.`
+toast. Set `"autoClear": false` to keep a completed list on screen until you
+clear it by hand. See the
+[configuration reference](./configuration.md#autoclear).
+
 ## Localization
 
 The overlay heading, the `+N more` summary, the collapse hint, the `/todos`

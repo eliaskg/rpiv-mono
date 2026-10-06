@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Task } from "../tool/types.js";
 import { isTransitionValid } from "./invariants.js";
 import type { TaskState } from "./state.js";
-import { applyTaskMutation } from "./state-reducer.js";
+import { applyTaskMutation, clearTasksPreservingIds } from "./state-reducer.js";
 
 const emptyState = (): TaskState => ({ tasks: [], nextId: 1 });
 
@@ -193,6 +193,26 @@ describe("applyTaskMutation — list/get/delete/clear", () => {
 		const state = stateWith(task({ id: 1, subject: "alpha" }));
 		const result = applyTaskMutation(state, "get", { id: 1 });
 		expect(result.op).toEqual({ kind: "get", task: state.tasks[0] });
+	});
+});
+
+describe("clearTasksPreservingIds", () => {
+	it("empties tasks and keeps nextId — the auto-clear contract", () => {
+		const state = stateWith(task({ id: 5, subject: "x", status: "completed" }));
+		expect(clearTasksPreservingIds(state)).toEqual({ tasks: [], nextId: 6 });
+	});
+
+	it("differs from the clear action, which restarts ids at 1", () => {
+		const state = stateWith(task({ id: 5, subject: "x", status: "completed" }));
+		expect(applyTaskMutation(state, "clear", {}).state.nextId).toBe(1);
+		expect(clearTasksPreservingIds(state).nextId).toBe(6);
+	});
+
+	it("is pure — the input snapshot keeps its tasks", () => {
+		const state = stateWith(task({ id: 1, subject: "x", status: "completed" }));
+		clearTasksPreservingIds(state);
+		expect(state.tasks).toHaveLength(1);
+		expect(state.nextId).toBe(2);
 	});
 });
 

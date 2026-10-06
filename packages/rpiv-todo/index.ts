@@ -20,7 +20,7 @@
  */
 
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { KeyId } from "@earendil-works/pi-tui";
+import { type KeyId, Text } from "@earendil-works/pi-tui";
 import { COLLAPSE_KEY_OFF, resolveCollapseKey } from "./config.js";
 import { I18N_NAMESPACE } from "./state/i18n-bridge.js";
 import { replayFromBranch } from "./state/replay.js";
@@ -35,6 +35,8 @@ import {
 } from "./state/store.js";
 import { registerTodosCommand, registerTodoTool, TOOL_NAME } from "./todo.js";
 import type { TodoOverlay } from "./todo-overlay.js";
+import { CLEARED_MESSAGE_TYPE } from "./tool/types.js";
+import { ACTION_GLYPH } from "./view/format.js";
 
 type I18nLoader = {
 	registerLocalesFromDir: (namespace: string, packageUrl: string, options?: { label?: string }) => void;
@@ -148,7 +150,20 @@ export default function (pi: ExtensionAPI, importOverlay: TodoOverlayImporter = 
 	}
 
 	registerTodoTool(pi);
-	registerTodosCommand(pi);
+
+	// Renders the custom message `/todos clear` writes next to its durable reset.
+	// Pi falls back to a plain box when no renderer matches a custom message type,
+	// so this only controls the look, not whether the notice appears.
+	pi.registerMessageRenderer(CLEARED_MESSAGE_TYPE, (message, _options, theme) => {
+		const details = message.details as { count?: number } | undefined;
+		const label = typeof details?.count === "number" ? `${details.count} cleared` : "Todo list cleared";
+		return new Text(`${theme.fg("dim", ACTION_GLYPH.clear)} ${theme.fg("dim", label)}`, 1, 0);
+	});
+
+	// The command repaints through this closure: a slash command emits no
+	// `tool_execution_end`, so the overlay would otherwise keep the removed rows
+	// until the next tool call or `/reload`.
+	registerTodosCommand(pi, () => updateTodoOverlay(true));
 
 	// Collapse/expand hotkey for the todo overlay. The key is resolved once at
 	// factory scope from config (register-once contract: a config change needs

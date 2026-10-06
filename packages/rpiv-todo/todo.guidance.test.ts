@@ -2,10 +2,18 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createMockPi } from "@juicesharp/rpiv-test-utils";
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_PROMPT_GUIDELINES, DEFAULT_PROMPT_SNIPPET, registerTodoTool, TOOL_NAME } from "./todo.js";
+import {
+	AUTO_CLEAR_GUIDELINE,
+	DEFAULT_PROMPT_GUIDELINES,
+	DEFAULT_PROMPT_SNIPPET,
+	registerTodoTool,
+	TOOL_NAME,
+} from "./todo.js";
 
 const CONFIG_PATH = join(process.env.HOME!, ".config", "rpiv-todo", "config.json");
-const DEFAULT_GUIDELINES_LENGTH = DEFAULT_PROMPT_GUIDELINES.length;
+// `autoClear` defaults to true, so the built-in list carries the auto-clear
+// bullet unless the config turns the feature off.
+const DEFAULT_GUIDELINES_LENGTH = DEFAULT_PROMPT_GUIDELINES.length + 1;
 
 function writeConfig(data: Record<string, unknown>): void {
 	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
@@ -48,7 +56,7 @@ describe("registerTodoTool — guidance overrides", () => {
 		registerTodoTool(pi);
 		const tool = captured.tools.get(TOOL_NAME)!;
 		expect(tool.promptSnippet).toBe(DEFAULT_PROMPT_SNIPPET);
-		expect(tool.promptGuidelines).toEqual(["Rule one", "Rule two"]);
+		expect(tool.promptGuidelines).toEqual(["Rule one", "Rule two", AUTO_CLEAR_GUIDELINE]);
 	});
 
 	it("overrides both promptSnippet and promptGuidelines", () => {
@@ -57,7 +65,7 @@ describe("registerTodoTool — guidance overrides", () => {
 		registerTodoTool(pi);
 		const tool = captured.tools.get(TOOL_NAME)!;
 		expect(tool.promptSnippet).toBe("Custom");
-		expect(tool.promptGuidelines).toEqual(["Rule"]);
+		expect(tool.promptGuidelines).toEqual(["Rule", AUTO_CLEAR_GUIDELINE]);
 	});
 
 	it("falls back to defaults on empty promptSnippet", () => {
@@ -83,5 +91,38 @@ describe("registerTodoTool — guidance overrides", () => {
 		registerTodoTool(pi);
 		const tool = captured.tools.get(TOOL_NAME)!;
 		expect((tool.promptGuidelines as string[]).length).toBe(DEFAULT_GUIDELINES_LENGTH);
+	});
+});
+
+describe("registerTodoTool — auto-clear guidance", () => {
+	it("appends the auto-clear bullet while autoClear is on", () => {
+		const { pi, captured } = createMockPi();
+		registerTodoTool(pi);
+		const guidelines = captured.tools.get(TOOL_NAME)!.promptGuidelines as string[];
+		expect(guidelines).toContain(AUTO_CLEAR_GUIDELINE);
+		expect(guidelines.at(-1)).toBe(AUTO_CLEAR_GUIDELINE);
+	});
+
+	it("omits the auto-clear bullet when autoClear is false", () => {
+		writeConfig({ autoClear: false });
+		const { pi, captured } = createMockPi();
+		registerTodoTool(pi);
+		const guidelines = captured.tools.get(TOOL_NAME)!.promptGuidelines as string[];
+		expect(guidelines).not.toContain(AUTO_CLEAR_GUIDELINE);
+		expect(guidelines.length).toBe(DEFAULT_PROMPT_GUIDELINES.length);
+	});
+
+	it("appends the bullet after a promptGuidelines override", () => {
+		writeConfig({ guidance: { promptGuidelines: ["Rule one", "Rule two"] } });
+		const { pi, captured } = createMockPi();
+		registerTodoTool(pi);
+		expect(captured.tools.get(TOOL_NAME)!.promptGuidelines).toEqual(["Rule one", "Rule two", AUTO_CLEAR_GUIDELINE]);
+	});
+
+	it("leaves an override untouched when autoClear is false", () => {
+		writeConfig({ autoClear: false, guidance: { promptGuidelines: ["Rule one"] } });
+		const { pi, captured } = createMockPi();
+		registerTodoTool(pi);
+		expect(captured.tools.get(TOOL_NAME)!.promptGuidelines).toEqual(["Rule one"]);
 	});
 });

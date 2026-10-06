@@ -41,7 +41,13 @@ input box, updating as work moves:
 
 Press `ctrl+shift+t` to collapse the panel to its heading plus a one-line hint,
 and again to expand it. Run `/todos` at any time to print the full list grouped
-by status.
+by status. Run `/todos clear` when the panel still holds work from a
+conversation you have left or that was compacted. The reset survives `/reload`
+and compaction, and the model is told the list is empty.
+
+When the model completes every task, the panel clears itself and reports
+`Auto-cleared N todos.`. Set `"autoClear": false` in the config to keep a
+finished list on screen instead.
 
 ## What you get
 
@@ -53,7 +59,8 @@ by status.
   disk writes, nothing to lose.
 - **Finished work gets out of the way.** Completed rows stay visible for the rest
   of the turn, then drop at the start of the next one; the panel disappears
-  entirely when the list empties.
+  entirely when the list empties. A fully completed list clears itself, so the
+  next job starts on a clean panel.
 - **The overlay never eats your terminal.** Past the row budget it drops
   completed tasks first, truncates unfinished ones last, and tells you what it
   hid with `+3 more (2 completed, 1 pending)`.
@@ -74,7 +81,8 @@ Optional. Create `~/.config/rpiv-todo/config.json` (or
 ```json
 {
   "maxWidgetLines": 8,
-  "collapseKey": "alt+t"
+  "collapseKey": "alt+t",
+  "autoClear": false
 }
 ```
 
@@ -82,6 +90,7 @@ Optional. Create `~/.config/rpiv-todo/config.json` (or
 | --- | --- | --- |
 | `maxWidgetLines` | Content rows the overlay may use, heading included. Minimum `3`. Applies on the next repaint. Pi's tool-output expansion mode shows all tasks. | `12` |
 | `collapseKey` | Key that collapses and expands the panel, in Pi keybinding form (`alt+o`, `ctrl+shift+t`). Set `"off"` to register no shortcut. Needs `/reload` to rebind. | `"ctrl+shift+t"` |
+| `autoClear` | Whether the `todo` tool empties the list when every visible task is `completed`. The automatic clear keeps the id counter. The model-facing bullet it adds to `guidance` needs `/reload`. | `true` |
 | `guidance` | Replaces the built-in instructions the extension gives the model about when and how to use the todo list. Needs `/reload`. | _(built-ins)_ |
 
 A missing or malformed file falls back to these defaults. `rpiv-todo` only reads
@@ -97,8 +106,8 @@ this file — it never writes one. Full semantics:
   — config file resolution, option validation rules, and the accepted keybinding
   grammar.
 - [Overlay and `/todos`](https://github.com/juicesharp/rpiv-mono/blob/main/packages/rpiv-todo/docs/overlay.md)
-  — overlay lifecycle, glyphs, overflow behavior, `/todos` output, and
-  localization.
+  — overlay lifecycle, glyphs, overflow behavior, `/todos` and `/todos clear`
+  output, and localization.
 
 ## Requirements
 

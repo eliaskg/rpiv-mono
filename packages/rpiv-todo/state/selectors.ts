@@ -104,3 +104,14 @@ export function selectHasActive(state: TaskState): boolean {
 }
 
 export const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set(["pending", "in_progress"]);
+
+/**
+ * Auto-clear predicate: the visible set (tombstones excluded) is non-empty and
+ * every visible task is `completed`. A tombstone-only list is already empty for
+ * the user, so it never triggers a clear of its own — the empty list is the
+ * steady state, not a state that needs clearing.
+ */
+export function selectAutoClearEligible(state: TaskState): boolean {
+	const visible = selectVisibleTasks(state);
+	return visible.length > 0 && visible.every((t) => t.status === "completed");
+}

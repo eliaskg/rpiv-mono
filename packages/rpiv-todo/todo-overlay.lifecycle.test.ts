@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { createMockCtx, createMockPi, createMockUI } from "@juicesharp/rpiv-test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +7,15 @@ import { __resetState, registerTodoTool, setActiveRenderSession } from "./todo.j
 import { TodoOverlay } from "./todo-overlay.js";
 
 const WIDGET_KEY = "rpiv-todos";
+const CONFIG_PATH = join(process.env.HOME!, ".config", "rpiv-todo", "config.json");
+
+function writeConfigFile(contents: string): void {
+	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+	writeFileSync(CONFIG_PATH, contents, "utf-8");
+}
+function removeConfigFile(): void {
+	rmSync(CONFIG_PATH, { force: true });
+}
 
 const identityTheme = {
 	fg: (_c: string, s: string) => s,
@@ -15,7 +26,16 @@ const identityTheme = {
 
 // Register the todo tool and seed module state via its real execute() — this
 // exercises the same mutation path production uses.
-async function seed(captured: ReturnType<typeof createMockPi>["captured"], actions: unknown[]) {
+async function seed(
+	captured: ReturnType<typeof createMockPi>["captured"],
+	actions: unknown[],
+	config?: Record<string, unknown>,
+) {
+	// `autoClear` is on by default, so a fully completed list empties itself before
+	// the overlay can draw it. Callers that need completed rows to survive pass
+	// `{ autoClear: false }`; the value is read per tool call, so writing the file
+	// here is enough.
+	if (config) writeConfigFile(JSON.stringify(config));
 	const tool = captured.tools.get("todo");
 	if (!tool) throw new Error("todo tool not registered");
 	const ctx = createMockCtx();
@@ -38,9 +58,11 @@ function registerTool() {
 
 beforeEach(() => {
 	__resetState();
+	removeConfigFile();
 });
 afterEach(() => {
 	__resetState();
+	removeConfigFile();
 	vi.restoreAllMocks();
 });
 
@@ -222,10 +244,14 @@ describe("TodoOverlay — lifecycle", () => {
 
 	it("resetCompletedDisplayState() lets replayed completed tasks be shown once again", async () => {
 		const { captured } = registerTool();
-		await seed(captured, [
-			{ action: "create", subject: "done" },
-			{ action: "update", id: 1, status: "completed" },
-		]);
+		await seed(
+			captured,
+			[
+				{ action: "create", subject: "done" },
+				{ action: "update", id: 1, status: "completed" },
+			],
+			{ autoClear: false },
+		);
 		const overlay = new TodoOverlay();
 		const ui = makeCtx();
 		overlay.setUICtx(ui);

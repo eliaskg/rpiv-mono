@@ -12,17 +12,28 @@
  * continue to import from `./todo.js`.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadConfig, validateGuidanceFields } from "./config.js";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { getAutoClear, loadConfig, validateGuidanceFields } from "./config.js";
 import { formatStatusLabel, t } from "./state/i18n-bridge.js";
-import { selectTasksByStatus, selectTodoCounts, selectVisibleTasks } from "./state/selectors.js";
-import { applyTaskMutation } from "./state/state-reducer.js";
-import { commitState, getRenderState, getState, sid } from "./state/store.js";
-import { buildToolResult } from "./tool/response-envelope.js";
+import { CLEAR_ENTRY_TYPE } from "./state/replay.js";
 import {
+	selectAutoClearEligible,
+	selectTasksByStatus,
+	selectTodoCounts,
+	selectVisibleTasks,
+} from "./state/selectors.js";
+import type { TaskState } from "./state/state.js";
+import { applyTaskMutation, clearTasksPreservingIds, type Op } from "./state/state-reducer.js";
+import { commitState, getRenderState, getState, sid } from "./state/store.js";
+import { applyAutoClear, buildToolResult } from "./tool/response-envelope.js";
+import {
+	ARG_CLEAR,
+	CLEARED_MESSAGE_TYPE,
 	COMMAND_NAME,
 	ERR_REQUIRES_INTERACTIVE,
 	MSG_NO_TODOS,
+	type TaskAction,
 	type TaskMutationParams,
 	TOOL_LABEL,
 	TOOL_NAME,
@@ -35,6 +46,56 @@ import { formatCommandTaskLine, renderTodoCall, renderTodoResult } from "./view/
 const SECTION_PENDING = "── Pending ──";
 const SECTION_IN_PROGRESS = "── In Progress ──";
 const SECTION_COMPLETED = "── Completed ──";
+
+// English fallbacks for the `/todos clear` path. `{count}` is substituted at
+// notify time, the same convention `overlay.expandHint` uses for `{key}`.
+const MSG_USAGE = "Usage: /todos [clear]";
+const MSG_NOTHING_TO_CLEAR = "No todos to clear.";
+const MSG_CLEARED = "{count} cleared.";
+const CLEAR_ARGUMENT_DESCRIPTION = "Remove every todo on this branch";
+
+// English fallback for the auto-clear toast. `{count}` is substituted at notify
+// time. The count names every removed row, tombstones included.
+const MSG_AUTO_CLEARED = "Auto-cleared {count} todos.";
+
+/**
+ * Actions that may fire the auto-clear. `list` and `get` are excluded on
+ * purpose: a read-only call must not mutate the list. `clear` is excluded
+ * because it already empties the list.
+ */
+const AUTO_CLEAR_ACTIONS: ReadonlySet<TaskAction> = new Set(["create", "update", "delete"]);
+
+/**
+ * Model-facing bullet appended to the guideline list while `autoClear` is on.
+ * Without it the model keeps calling `clear` by habit and keeps referencing ids
+ * from a list it can no longer see.
+ */
+export const AUTO_CLEAR_GUIDELINE =
+	"The list clears itself when every task is completed. Do not call `clear` for that, and do not reference ids from a cleared list.";
+
+/**
+ * Model-facing notice written beside a clear. This is LLM copy, not UI chrome,
+ * so it stays an English literal like the tool description. It exists because
+ * the durable clear entry never enters context: without this line the model
+ * keeps believing the removed tasks exist.
+ */
+export function clearedModelNotice(count: number): string {
+	const noun = count === 1 ? "task" : "tasks";
+	return `Todo list cleared by the user. ${count} ${noun} removed. Task ids restart at 1.`;
+}
+
+/**
+ * Autocomplete items for the `/todos ` argument. Returns the single `clear`
+ * item for an empty or partial prefix, and `null` once the typed text can no
+ * longer become `clear`, so Pi shows no popup for a bad argument.
+ */
+export function getTodosArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+	const prefix = (argumentPrefix ?? "").trim().toLowerCase();
+	if (prefix !== "" && !ARG_CLEAR.startsWith(prefix)) return null;
+	return [
+		{ value: ARG_CLEAR, label: ARG_CLEAR, description: t("command.argument.clear", CLEAR_ARGUMENT_DESCRIPTION) },
+	];
+}
 
 // ---------------------------------------------------------------------------
 // Public re-exports — existing consumers (overlay, tests, index.ts) keep
@@ -66,19 +127,36 @@ export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 
 export function registerTodoTool(pi: ExtensionAPI): void {
 	const guidance = validateGuidanceFields(loadConfig().guidance);
+	const baseGuidelines = guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES;
+	// Appended after an override so a user-supplied `guidance.promptGuidelines`
+	// still carries the auto-clear contract. `autoClear` is read here, at
+	// registration, so flipping the config needs `/reload` to change the prompt.
+	const promptGuidelines = getAutoClear() ? [...baseGuidelines, AUTO_CLEAR_GUIDELINE] : baseGuidelines;
 	pi.registerTool({
 		name: TOOL_NAME,
 		label: TOOL_LABEL,
 		description:
 			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone. Use this to plan and track multi-step work like research, design, and implementation.",
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
-		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
+		promptGuidelines,
 		parameters: TodoParamsSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const result = applyTaskMutation(getState(sid(ctx)), params.action, params as TaskMutationParams);
-			commitState(sid(ctx), result.state);
-			return buildToolResult(params.action, params as TaskMutationParams, result.state, result.op);
+			const sessionId = sid(ctx);
+			const result = applyTaskMutation(getState(sessionId), params.action, params as TaskMutationParams);
+			commitState(sessionId, result.state);
+			// Built from the pre-clear snapshot so the base line still describes the
+			// call the model made; `applyAutoClear` then re-points `details`.
+			const toolResult = buildToolResult(params.action, params as TaskMutationParams, result.state, result.op);
+			const cleared = maybeAutoClear(sessionId, params.action, result.op);
+			if (!cleared) return toolResult;
+			if (ctx.hasUI) {
+				ctx.ui.notify(
+					t("command.auto_cleared", MSG_AUTO_CLEARED).replace("{count}", String(cleared.count)),
+					"info",
+				);
+			}
+			return applyAutoClear(toolResult, cleared.state, cleared.count);
 		},
 
 		// renderCall reflects the FOREGROUND slot, not the calling session's. Pi's
@@ -100,15 +178,66 @@ export function registerTodoTool(pi: ExtensionAPI): void {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-clear
+// ---------------------------------------------------------------------------
+
+export interface AutoClearResult {
+	/** The committed empty snapshot — its `nextId` is unchanged. */
+	state: TaskState;
+	/** Rows removed, tombstones included. */
+	count: number;
+}
+
+/**
+ * Clear the list when a mutating action left every visible task completed.
+ * Runs after the action's own commit, so it reads the post-mutation slot.
+ *
+ * Order matters: the caller builds the tool result from the pre-clear snapshot,
+ * this commits the empty one, and `applyAutoClear` re-points `details` at it.
+ * That committed snapshot is also what `state/replay.ts` reads back after
+ * `/reload`, so the auto-clear needs no `rpiv-todo-clear` entry.
+ *
+ * Reads `autoClear` fresh on every call, so a config edit takes effect on the
+ * next tool call. Returns `undefined` when the action cannot clear, the action
+ * failed, the config disables the feature, or the list still holds work.
+ */
+export function maybeAutoClear(sessionId: string, action: TaskAction, op: Op): AutoClearResult | undefined {
+	if (!AUTO_CLEAR_ACTIONS.has(action)) return undefined;
+	if (op.kind === "error") return undefined;
+	if (!getAutoClear()) return undefined;
+	const state = getState(sessionId);
+	if (!selectAutoClearEligible(state)) return undefined;
+	const cleared = clearTasksPreservingIds(state);
+	commitState(sessionId, cleared);
+	return { state: cleared, count: state.tasks.length };
+}
+
+// ---------------------------------------------------------------------------
 // /todos slash command
 // ---------------------------------------------------------------------------
 
-export function registerTodosCommand(pi: ExtensionAPI): void {
+/**
+ * @param refreshOverlay repaints the overlay after the clear. `index.ts` passes
+ * its own `updateTodoOverlay(true)` closure — the command cannot reach the
+ * widget directly, and no `tool_execution_end` fires for a slash command, so
+ * without this the panel would keep the removed rows until the next tool call.
+ */
+export function registerTodosCommand(pi: ExtensionAPI, refreshOverlay: () => Promise<void> | void): void {
 	pi.registerCommand(COMMAND_NAME, {
-		description: "Show all todos on the current branch, grouped by status",
-		handler: async (_args, ctx) => {
+		description: "Show all todos on the current branch, grouped by status, or clear them",
+		getArgumentCompletions: getTodosArgumentCompletions,
+		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify(t("command.requires_interactive", ERR_REQUIRES_INTERACTIVE), "error");
+				return;
+			}
+			const arg = args.trim().toLowerCase();
+			if (arg === ARG_CLEAR) {
+				await clearTodos(pi, ctx, refreshOverlay);
+				return;
+			}
+			if (arg !== "") {
+				ctx.ui.notify(t("command.usage", MSG_USAGE), "error");
 				return;
 			}
 			const state = getState(sid(ctx));
@@ -142,4 +271,38 @@ export function registerTodosCommand(pi: ExtensionAPI): void {
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
+}
+
+/**
+ * Clear path for `/todos clear`. Order matters:
+ *  1. commit so live readers (overlay, `/todos`, `renderCall`) see an empty list;
+ *  2. append the durable reset, because a replay of the branch would otherwise
+ *     restore the tasks from the last `todo` tool result;
+ *  3. tell the model, then repaint, then notify.
+ */
+async function clearTodos(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	refreshOverlay: () => Promise<void> | void,
+): Promise<void> {
+	const state = getState(sid(ctx));
+	if (state.tasks.length === 0) {
+		ctx.ui.notify(t("command.nothing_to_clear", MSG_NOTHING_TO_CLEAR), "info");
+		return;
+	}
+	const { state: cleared, op } = applyTaskMutation(state, "clear", {});
+	if (op.kind !== "clear") return;
+	commitState(sid(ctx), cleared);
+	pi.appendEntry(CLEAR_ENTRY_TYPE, { count: op.count });
+	pi.sendMessage(
+		{
+			customType: CLEARED_MESSAGE_TYPE,
+			content: clearedModelNotice(op.count),
+			display: true,
+			details: { count: op.count },
+		},
+		{ triggerTurn: false },
+	);
+	ctx.ui.notify(t("command.cleared", MSG_CLEARED).replace("{count}", String(op.count)), "info");
+	await refreshOverlay();
 }

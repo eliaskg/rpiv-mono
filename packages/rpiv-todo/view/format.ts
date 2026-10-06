@@ -149,7 +149,10 @@ export function renderTodoResult(result: { details?: unknown }, theme: Theme): T
 				status = params.status ?? details.tasks.find((t) => t.id === params.id)?.status;
 				break;
 			case "delete":
-				status = details.tasks.find((t) => t.id === params.id)?.status;
+				// The auto-clear empties `details.tasks`, so the tombstone this call
+				// wrote is often gone by render time. A successful delete always means
+				// `deleted`; a failed one keeps the plain `✓` fallback.
+				status = details.tasks.find((t) => t.id === params.id)?.status ?? (details.error ? undefined : "deleted");
 				break;
 			case "list":
 			case "get":

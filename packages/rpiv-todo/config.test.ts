@@ -3,8 +3,10 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	COLLAPSE_KEY_OFF,
+	DEFAULT_AUTO_CLEAR,
 	DEFAULT_COLLAPSE_KEY,
 	DEFAULT_MAX_WIDGET_LINES,
+	getAutoClear,
 	getMaxWidgetLines,
 	isValidCollapseKeySpec,
 	loadConfig,
@@ -53,6 +55,40 @@ describe("getMaxWidgetLines", () => {
 		expect(getMaxWidgetLines()).toBe(8);
 		writeConfigFile(JSON.stringify({ maxWidgetLines: 50 }));
 		expect(getMaxWidgetLines()).toBe(50);
+	});
+});
+
+describe("getAutoClear", () => {
+	it("defaults to true when no config is present", () => {
+		expect(getAutoClear()).toBe(true);
+		expect(DEFAULT_AUTO_CLEAR).toBe(true);
+	});
+	it("defaults to true when the field is absent", () => {
+		writeConfigFile(JSON.stringify({ maxWidgetLines: 8 }));
+		expect(getAutoClear()).toBe(true);
+	});
+	it("honors an explicit false — the off switch", () => {
+		writeConfigFile(JSON.stringify({ autoClear: false }));
+		expect(getAutoClear()).toBe(false);
+	});
+	it("honors an explicit true", () => {
+		writeConfigFile(JSON.stringify({ autoClear: true }));
+		expect(getAutoClear()).toBe(true);
+	});
+	it("returns the default for non-boolean values", () => {
+		writeConfigFile(JSON.stringify({ autoClear: "off" }));
+		expect(getAutoClear()).toBe(true);
+		writeConfigFile(JSON.stringify({ autoClear: 0 }));
+		expect(getAutoClear()).toBe(true);
+		writeConfigFile(JSON.stringify({ autoClear: null }));
+		expect(getAutoClear()).toBe(true);
+	});
+	it("reads config fresh on every call (no caching, parity with getMaxWidgetLines)", () => {
+		expect(getAutoClear()).toBe(true);
+		writeConfigFile(JSON.stringify({ autoClear: false }));
+		expect(getAutoClear()).toBe(false);
+		writeConfigFile(JSON.stringify({ autoClear: true }));
+		expect(getAutoClear()).toBe(true);
 	});
 });
 

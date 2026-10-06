@@ -2,7 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { makeTheme } from "@juicesharp/rpiv-test-utils";
 import { describe, expect, it } from "vitest";
 import type { Task } from "../tool/types.js";
-import { formatOverlayTaskLine } from "./format.js";
+import { formatOverlayTaskLine, renderTodoResult } from "./format.js";
 
 const recordingTheme = makeTheme({
 	fg: (color, text) => `<${color}>${text}</${color}>`,
@@ -53,5 +53,27 @@ describe("formatOverlayTaskLine — terminal control characters", () => {
 				false,
 			),
 		).toBe("<warning>◐</warning> <accent>quiettask</accent> <muted>(Working)</muted>");
+	});
+});
+
+describe("renderTodoResult — status echo", () => {
+	function echo(details: unknown): string {
+		return renderTodoResult({ details }, recordingTheme).render(80).join("").trim();
+	}
+
+	it("still echoes 'deleted' after an auto-clear removed the tombstone", () => {
+		expect(echo({ action: "delete", params: { id: 2 }, tasks: [], nextId: 3 })).toBe("<muted>⊘ deleted</muted>");
+	});
+
+	it("falls back to a plain check when the delete failed", () => {
+		expect(echo({ action: "delete", params: { id: 99 }, tasks: [], nextId: 1, error: "#99 not found" })).toBe(
+			"<success>✓</success>",
+		);
+	});
+
+	it("echoes the requested status for an update whose task is gone", () => {
+		expect(echo({ action: "update", params: { id: 2, status: "completed" }, tasks: [], nextId: 3 })).toBe(
+			"<success>● completed</success>",
+		);
 	});
 });

@@ -1,7 +1,7 @@
 import { buildSessionEntries, createMockCtx, makeTodoToolResult, makeUserMessage } from "@juicesharp/rpiv-test-utils";
 import { describe, expect, it } from "vitest";
 import type { Task, TaskDetails } from "../tool/types.js";
-import { isTaskDetails, replayFromBranch } from "./replay.js";
+import { CLEAR_ENTRY_TYPE, isTaskDetails, replayFromBranch } from "./replay.js";
 
 function buildBranch(snapshots: TaskDetails[]) {
 	const messages = snapshots.map((s) => makeTodoToolResult(s));
@@ -64,6 +64,20 @@ describe("replayFromBranch", () => {
 		expect(state.nextId).toBe(3);
 	});
 
+	it("replays an auto-clear snapshot as empty, with the id counter kept", () => {
+		// The auto-clear writes no entry of its own. The completing call's snapshot
+		// is the reset, so last-write-wins already restores an empty list.
+		const ctx = createMockCtx({
+			branch: buildBranch([
+				{ action: "create", params: {}, tasks: [taskFixture(1, "a")], nextId: 2 },
+				{ action: "update", params: { id: 1, status: "completed" }, tasks: [], nextId: 2 },
+			]),
+		});
+		const state = replayFromBranch(ctx);
+		expect(state.tasks).toEqual([]);
+		expect(state.nextId).toBe(2);
+	});
+
 	it("clones tasks so mutating the fixture does not mutate replayed state", () => {
 		const fixture: Task = taskFixture(1, "original");
 		const ctx = createMockCtx({
@@ -115,5 +129,51 @@ describe("replayFromBranch", () => {
 		const fresh = replayFromBranch(ctx2);
 		expect(fresh.tasks).toEqual([]);
 		expect(fresh.nextId).toBe(1);
+	});
+});
+
+describe("replayFromBranch — /todos clear entries", () => {
+	const clearEntry = { type: "custom", customType: CLEAR_ENTRY_TYPE, data: { count: 2 } };
+	const snapshot = (subject: string): TaskDetails => ({
+		action: "create",
+		params: {},
+		tasks: [taskFixture(1, subject)],
+		nextId: 2,
+	});
+
+	it("resets the list when a clear entry follows the last snapshot", () => {
+		const ctx = createMockCtx({ branch: [...buildBranch([snapshot("stale")]), clearEntry] as never });
+		const state = replayFromBranch(ctx);
+		expect(state.tasks).toEqual([]);
+		expect(state.nextId).toBe(1);
+	});
+
+	it("lets a later tool result rebuild tasks over the reset", () => {
+		const ctx = createMockCtx({
+			branch: [...buildBranch([snapshot("stale")]), clearEntry, ...buildBranch([snapshot("fresh")])] as never,
+		});
+		const state = replayFromBranch(ctx);
+		expect(state.tasks).toHaveLength(1);
+		expect(state.tasks[0]?.subject).toBe("fresh");
+		expect(state.nextId).toBe(2);
+	});
+
+	it("ignores custom entries of other types", () => {
+		const ctx = createMockCtx({
+			branch: [
+				...buildBranch([snapshot("kept")]),
+				{ type: "custom", customType: "some-other-extension", data: { count: 9 } } as never,
+			] as never,
+		});
+		const state = replayFromBranch(ctx);
+		expect(state.tasks).toHaveLength(1);
+		expect(state.tasks[0]?.subject).toBe("kept");
+	});
+
+	it("resets even when the clear entry carries no data", () => {
+		const ctx = createMockCtx({
+			branch: [...buildBranch([snapshot("stale")]), { type: "custom", customType: CLEAR_ENTRY_TYPE } as never],
+		});
+		expect(replayFromBranch(ctx).tasks).toEqual([]);
 	});
 });

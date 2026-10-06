@@ -12,6 +12,19 @@ export const TOOL_NAME = "todo";
 export const TOOL_LABEL = "Todo";
 export const COMMAND_NAME = "todos";
 
+/**
+ * `/todos` argument that clears the list. Matched after trim + lowercase, so
+ * `/todos Clear` works and `/todos clear now` does not.
+ */
+export const ARG_CLEAR = "clear";
+
+/**
+ * Custom-message type for the model-facing clear notice. `pi.sendMessage` writes
+ * it with `triggerTurn: false`, so the model reads it on its next turn instead
+ * of costing a round trip at clear time. Renderer lives in `index.ts`.
+ */
+export const CLEARED_MESSAGE_TYPE = "rpiv-todo-cleared";
+
 // ---------------------------------------------------------------------------
 // User-facing strings (kept stable for /todos UX parity).
 // ---------------------------------------------------------------------------

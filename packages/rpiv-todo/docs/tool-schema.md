@@ -15,6 +15,14 @@ for the `todo` tool registered by
 | `delete` | `id` | Tombstones the task (`status: "deleted"`); it is not removed. |
 | `clear` | — | Drops every task and resets the id counter to `1`. |
 
+The `/todos clear` command runs this same action. It also appends the durable
+reset entry and writes the model-facing notice. See
+[Overlay and `/todos`](./overlay.md#todos-clear).
+
+While the `autoClear` config option is on, which it is by default, any mutating
+action that leaves every visible task `completed` runs a variant of `clear` that
+keeps the id counter. See [Overlay and `/todos`](./overlay.md#auto-clear).
+
 ## Parameters
 
 ```ts
